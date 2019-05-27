@@ -12,10 +12,17 @@ from threading import Thread, Timer
 from pygatt import GATTToolBackend
 
 
+root = logging.getLogger()
+root.setLevel(logging.INFO)
+
+#logging.basicConfig()
+logging.getLogger('pygatt').setLevel(logging.WARNING)
+
 HEADER1 = 0xef
 HEADER2 = 0xdd
 
-def find_acaia_devices(timeout=5):
+def find_acaia_devices(timeout=3):
+    print('Looking for ACAIA devices...')
     adapter = GATTToolBackend('hci0')
     adapter.reset()
     adapter.start(False)
@@ -23,13 +30,14 @@ def find_acaia_devices(timeout=5):
     addresses=[]
     for d in devices:
         if d['name'] and d['name'].startswith('ACAIA'):
-            print d['name'],d['address']
+            print (d['name'],d['address'])
             addresses.append(d['address'])
-
+    adapter.stop()
     return addresses
 
 def print_acaia_characteristics(device_address):
     adapter = GATTToolBackend('hci0')
+    adapter.reset()
     adapter.start(False)
     device = adapter.connect(device_address)
 
@@ -39,8 +47,8 @@ def print_acaia_characteristics(device_address):
         string_type = str
 
     for chars in device.discover_characteristics().values():
-        print chars.uuid,device.get_handle(string_type(chars.uuid))
-
+        print(chars.uuid,device.get_handle(string_type(chars.uuid)))
+    adapter.stop()
 
 class Queue(object):
 
@@ -87,10 +95,10 @@ class Message(object):
             value= ((payload[1] & 0xff) << 8) + (payload[0] & 0xff)
             unit=  payload[4] & 0xFF;
 
-            if (unit == 1): value /= 10
-            elif (unit == 2): value /= 100
-            elif (unit == 3): value /= 1000
-            elif (unit == 4): value /= 10000
+            if (unit == 1): value /= 10.0
+            elif (unit == 2): value /= 100.0
+            elif (unit == 3): value /= 1000.0
+            elif (unit == 4): value /= 10000.0
             else: raise Exception('unit value not in range %d:' % unit)
 
             if ((payload[5] & 0x02) == 0x02):
@@ -240,7 +248,6 @@ class AcaiaScale(object):
         self.packet=result
 
 
-    #check this is correct
     def characteristicValueChanged(self,handle,value):
         #print handle,value
         self.queue.add(value)
@@ -292,6 +299,7 @@ class AcaiaScale(object):
         self.queue= Queue(self.callback_queue)
 
         self.adapter = GATTToolBackend(self.gatt_backend)
+        self.adapter.reset()
         self.adapter.start(False)
         self.device = self.adapter.connect(self.device_address)
 
@@ -299,7 +307,6 @@ class AcaiaScale(object):
         self.device.subscribe(self.characteristic_uuid, self.characteristicValueChanged)
         self.notificationsReady()
 
-    #you need to stop the Thread
     def disconnect(self):
         self.connected=False
         self.device.disconnect()
@@ -326,10 +333,10 @@ class AcaiaScale(object):
 
         try:
             self.device.char_write(self.characteristic_uuid,encodeHeartbeat(),wait_for_response=False)
-            logging.info('Heartbeat success')
+            logging.debug('Heartbeat success')
             return True
         except:
-            logging.info('Heartbeat failed')
+            logging.debug('Heartbeat failed')
 
 
     def tare(self):
@@ -344,22 +351,24 @@ def main():
 
     addresses=find_acaia_devices()
 
-
+    time.sleep(1)
     if addresses:
         print_acaia_characteristics(addresses[0])
     else:
-        print 'No Acaia devices found'
-
+        print('No Acaia devices found')
+    
+    time.sleep(1)
     scale=AcaiaScale()
 
     #scale.connect('00:1C:97:17:FD:97')
     scale.auto_connect() #to pick the first available
 
     for i in range(10):
-        print scale.weight
+        print(scale.weight)
         time.sleep(0.5)
 
     scale.disconnect()
-
+    time.sleep(5)
+	
 if __name__ == '__main__':
     main()
