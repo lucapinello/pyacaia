@@ -25,6 +25,6 @@ setup(
     license='GPLv3',
     packages=find_packages(),
     install_requires=[
-        'pygatt>=3.1.1',
+        'pygatt>=4.0.3',
     ]
 )
