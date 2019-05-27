@@ -7,6 +7,8 @@ This code was inspired by the javascript version available here https://github.c
 ## 0. Requirements
 Linux, Python (2.7) and pygatt (https://github.com/peplin/pygatt)
 
+This package as been tested on a RasperryPI ZeroW with Raspbian GNU/Linux 9 (stretch)
+
 ## 1. Install with:
 
 `pip install pyacaia`
