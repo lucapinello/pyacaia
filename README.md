@@ -5,7 +5,7 @@ Python module to interact with Acaia scales (https://acaia.co/collections/coffee
 This code was inspired by the javascript version available here https://github.com/bpowers/btscale
 
 ## 0. Requirements
-Linux, Python (2.7) and pygatt (https://github.com/peplin/pygatt)
+Linux, Python (>=2.7 or >=3.5) and pygatt (https://github.com/peplin/pygatt)
 
 This package as been tested on a RasperryPI ZeroW with Raspbian GNU/Linux 9 (stretch)
 
