@@ -7,7 +7,7 @@ This code was inspired by the javascript version available here https://github.c
 ## 0. Requirements
 Linux, Python (>=2.7 or >=3.5) and pygatt (>=4.0.3) (https://github.com/peplin/pygatt)
 
-This package as been tested on a RasperryPI ZeroW with Raspbian GNU/Linux 9 (stretch)
+This package has been tested on a RasperryPI ZeroW with Raspbian GNU/Linux 9 (stretch)
 
 ## 1. Install with:
 
