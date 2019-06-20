@@ -4,51 +4,65 @@
 # Released under GPLv3
 #This code is based on the javascript version available here https://github.com/bpowers/btscale
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 import logging
 import time
 from threading import Thread, Timer
-from pygatt import GATTToolBackend
-
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
 
-#logging.basicConfig()
 logging.getLogger('pygatt').setLevel(logging.WARNING)
 
 HEADER1 = 0xef
 HEADER2 = 0xdd
 
-def find_acaia_devices(timeout=3):
-    print('Looking for ACAIA devices...')
-    adapter = GATTToolBackend('hci0')
-    adapter.reset()
-    adapter.start(False)
-    devices=adapter.scan(timeout=timeout,run_as_root=True)
+def find_acaia_devices(timeout=3,backend='bluepy'):
+
     addresses=[]
-    for d in devices:
-        if d['name'] and d['name'].startswith('ACAIA'):
-            print (d['name'],d['address'])
-            addresses.append(d['address'])
-    adapter.stop()
+    print('Looking for ACAIA devices...')
+
+    if backend=='pygatt':
+        try:
+            from pygatt import GATTToolBackend
+            adapter = GATTToolBackend('hci0')
+            adapter.reset()
+            adapter.start(False)
+            devices=adapter.scan(timeout=timeout,run_as_root=True)
+            addresses=[]
+            for d in devices:
+                if d['name'] and d['name'].startswith('ACAIA'):
+                    print (d['name'],d['address'])
+                    addresses.append(d['address'])
+            adapter.stop()
+        except:
+            raise Exception('pygatt is not installed')
+
+
+    elif backend=='bluepy':
+
+        try:
+            from bluepy.btle import Scanner, DefaultDelegate
+
+            class ScanDelegate(DefaultDelegate):
+                def __init__(self):
+                    DefaultDelegate.__init__(self)
+
+            scanner = Scanner().withDelegate(ScanDelegate())
+            devices = scanner.scan(timeout)
+
+            addresses=[]
+            for dev in devices:
+                for (adtype, desc, value) in dev.getScanData():
+                    if desc=='Complete Local Name' and value.startswith('ACAIA'):
+                        print(value, dev.addr)
+                        addresses.append(dev.addr)
+
+        except:
+            raise Exception('bluepy is not installed')
+
     return addresses
-
-def print_acaia_characteristics(device_address):
-    adapter = GATTToolBackend('hci0')
-    adapter.reset()
-    adapter.start(False)
-    device = adapter.connect(device_address)
-
-    try:
-        string_type = unicode
-    except NameError:
-        string_type = str
-
-    for chars in device.discover_characteristics().values():
-        print(chars.uuid,device.get_handle(string_type(chars.uuid)))
-    adapter.stop()
 
 class Queue(object):
 
@@ -211,18 +225,35 @@ class setInterval(Thread):
 
 class AcaiaScale(object):
 
-    def __init__(self,
-                 characteristic_uuid="00002a80-0000-1000-8000-00805f9b34fb",
-                 gatt_backend='hci0'):
+    def __init__(self,mac,char_uuid="00002a80-0000-1000-8000-00805f9b34fb",backend='bluepy',iface='hci0'):
 
+        if backend=='pygatt':
+            try:
+                from pygatt import GATTToolBackend
+            except:
+                raise Exception('pygatt is not installed')
+            self.backend_class=GATTToolBackend
+
+        elif backend=='bluepy':
+            try:
+                from bluepy import btle
+            except:
+                raise Exception('bluepy is not installed')
+            self.backend_class=btle
+
+        else:
+            raise Exception('Backend not supported')
+
+        self.backend=backend
+        self.iface=iface
+        self.mac=mac
+        self.adapter=None
+        self.device = None
         self.connected = False
 
-        self.adapter=None
-        self.device_address=None
-        self.device = None
-
-        self.characteristic_uuid=characteristic_uuid
-        self.gatt_backend=gatt_backend
+        self.char_uuid=char_uuid
+        self.char=None
+        self.handle=None
 
         self.queue = None
         self.packet=None
@@ -252,6 +283,11 @@ class AcaiaScale(object):
         #print handle,value
         self.queue.add(value)
 
+    def handleDiscovery(self, scanEntry, isNewDev, isNewData):
+        pass #DBG("Discovered device", scanEntry.addr)
+
+    def handleNotification(self,handle,value):
+        self.queue.add(value)
 
     def callback_queue(self,payload):
         #print('This is the queue')
@@ -274,6 +310,31 @@ class AcaiaScale(object):
             logging.debug(msg.value)
             pass
 
+
+    def connect(self):
+
+        if self.connected:
+            return
+
+        self.queue= Queue(self.callback_queue)
+
+        if self.backend=='bluepy':
+            self.device=self.backend_class.Peripheral(self.mac, addrType=self.backend_class.ADDR_TYPE_PUBLIC)
+            self.device=self.device.withDelegate(self)
+            self.char=scale.device.getCharacteristics(uuid=self.char_uuid)[0]
+            self.device.writeCharacteristic(14,bytearray([0x01,0x00]))
+
+        elif self.backend=='pygatt':
+            self.adapter = self.backend_class(self.iface)
+            self.adapter.reset()
+            self.adapter.start(False)
+            self.device = self.adapter.connect(self.mac)
+            self.device.subscribe(self.char_uuid, self.characteristicValueChanged)
+            self.handle=scale.device.get_handle(scale.char_uuid)
+
+        time.sleep(0.5)
+        self.notificationsReady()
+
     def auto_connect(self):
         if self.connected:
             return
@@ -284,55 +345,42 @@ class AcaiaScale(object):
         if addresses:
             device_address=addresses[0]
             logging.info('Connecting to:%s' % device_address)
-            self.connect(device_address)
+            self.connect()
         else:
             logging.info('No ACAIA scale found')
 
-
-    def connect(self,device_address):
-
-        if self.connected:
-            return
-
-        self.device_address=device_address
-
-        self.queue= Queue(self.callback_queue)
-
-        self.adapter = GATTToolBackend(self.gatt_backend)
-        self.adapter.reset()
-        self.adapter.start(False)
-        self.device = self.adapter.connect(self.device_address)
-
-        #self.device.receive_notification(13,bytearray([0x01, 0x00]))
-        self.device.subscribe(self.characteristic_uuid, self.characteristicValueChanged)
-        self.notificationsReady()
-
-    def disconnect(self):
-        self.connected=False
-        self.device.disconnect()
-        self.adapter.stop()
-        self.set_interval_thread.stop()
-
     def notificationsReady(self):
         logging.info('Scale Ready!')
-        self.connected = True;
-        self.ident();
+        self.connected = True
+        self.ident()
         self.set_interval_thread=setInterval(self.heartbeat,5)
         self.set_interval_thread.start()
 
     def ident(self):
+
         if not self.connected:
             return False
-        self.device.char_write(self.characteristic_uuid,encodeId(),wait_for_response=False)
-        self.device.char_write(self.characteristic_uuid,encodeNotificationRequest(),wait_for_response=False)
+
+        if self.backend=='bluepy':
+            self.char.write(encodeId(), withResponse=False)
+            self.char.write(encodeNotificationRequest(), withResponse=False)
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeId(),wait_for_response=False)
+            self.device.char_write(self.char_uuid,encodeNotificationRequest(),wait_for_response=False)
+
         return True
 
     def heartbeat(self):
+
         if not self.connected:
             return False
 
         try:
-            self.device.char_write(self.characteristic_uuid,encodeHeartbeat(),wait_for_response=False)
+            if self.backend=='bluepy':
+                self.char.write(encodeHeartbeat(), withResponse=False)
+            elif self.backend=='pygatt':
+                self.device.char_write_handle(self.handle,encodeHeartbeat(),wait_for_response=False)
+
             logging.debug('Heartbeat success')
             return True
         except:
@@ -342,9 +390,28 @@ class AcaiaScale(object):
     def tare(self):
         if not self.connected:
             return False
-        self.device.char_write(self.characteristic_uuid,encodeTare(),wait_for_response=False)
+        if backend=='bluepy':
+            self.char.write( encodeTare(), withResponse=False)
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeTare(),wait_for_response=False)
 
         return True
+
+
+    def disconnect(self):
+
+        self.connected=False
+        if self.device:
+
+            if self.backend=='pygatt':
+
+                self.device.disconnect()
+                self.adapter.stop()
+
+            elif self.backend=='bluepy':
+                self.device.disconnect()
+        self.set_interval_thread.stop()
+
 
 
 def main():
@@ -356,7 +423,7 @@ def main():
         print_acaia_characteristics(addresses[0])
     else:
         print('No Acaia devices found')
-    
+
     time.sleep(1)
     scale=AcaiaScale()
 
@@ -369,6 +436,6 @@ def main():
 
     scale.disconnect()
     time.sleep(5)
-	
+
 if __name__ == '__main__':
     main()
