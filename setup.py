@@ -18,7 +18,7 @@ version = re.search(
 
 setup(
     name='pyacaia',
-    version=0.1,
+    version=version,
     description='A Python module to interact with ACAIA scales via bluetooth (BLE)',
     url='https://github.com/lucapinello/pyacaia',
     author='Luca Pinello',
