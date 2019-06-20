@@ -330,7 +330,7 @@ class AcaiaScale(object):
             self.adapter.start(False)
             self.device = self.adapter.connect(self.mac)
             self.device.subscribe(self.char_uuid, self.characteristicValueChanged)
-            self.handle=scale.device.get_handle(scale.char_uuid)
+            self.handle=self.device.get_handle(self.char_uuid)
 
         time.sleep(0.5)
         self.notificationsReady()
@@ -390,7 +390,7 @@ class AcaiaScale(object):
     def tare(self):
         if not self.connected:
             return False
-        if backend=='bluepy':
+        if self.backend=='bluepy':
             self.char.write( encodeTare(), withResponse=False)
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeTare(),wait_for_response=False)
