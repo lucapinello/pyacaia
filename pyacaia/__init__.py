@@ -321,7 +321,7 @@ class AcaiaScale(object):
         if self.backend=='bluepy':
             self.device=self.backend_class.Peripheral(self.mac, addrType=self.backend_class.ADDR_TYPE_PUBLIC)
             self.device=self.device.withDelegate(self)
-            self.char=scale.device.getCharacteristics(uuid=self.char_uuid)[0]
+            self.char=self.device.getCharacteristics(uuid=self.char_uuid)[0]
             self.device.writeCharacteristic(14,bytearray([0x01,0x00]))
 
         elif self.backend=='pygatt':
