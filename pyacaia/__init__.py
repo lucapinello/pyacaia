@@ -4,7 +4,7 @@
 # Released under GPLv3
 #This code is based on the javascript version available here https://github.com/bpowers/btscale
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 import logging
 import time
@@ -294,8 +294,11 @@ class AcaiaScale(object):
         self.addBuffer(payload)
         if len(self.packet)<=3:
             return
-
-        msg = decode(self.packet)
+        try:
+            msg = decode(self.packet)
+        except:
+            logging.debug('msg error in decoding')
+            return
         self.packet=None
 
         if not msg:
