@@ -154,19 +154,46 @@ def encode(msgType,payload):
 
 
 def decode(bytes):
-    if (bytes[0] != HEADER1 and bytes[1] != HEADER2):
-        return
+    """Return a tuple - first element is the message, or None
+       if one not yet found.  Second is are the remaining
+       bytes, which can be empty
+       Messages are encoded as the encode() function above,
+       min message length is 6 bytes
+       HEADER1 (0xef)
+       HEADER1 (0xdd)
+       command 
+       length  (including this byte, excluding checksum)
+       payload of length-1 bytes
+       checksum byte1
+       checksum byte2
+       
+    """
+    messageStart = -1
+   
+    for i in range(len(bytes)-1):
+        if bytes[i]==HEADER1 and bytes[i+1]==HEADER2:
+            messageStart=i
+            break
+    if messageStart<0 or len(bytes)-messageStart<6:
+        return (None,bytes)
 
-    cmd = bytes[2]
+    messageEnd  = messageStart+bytes[messageStart+3]+5
 
+    if messageEnd>len(bytes):
+        return (None,bytes)
+
+    if messageStart>0:
+        logging.debug("Ignoring "+str(i)+" bytes before header")
+
+    cmd = bytes[messageStart+2]
     if (cmd !=12):
-        logging.debug("Non event notification message:%s" %bytes)
-        return
+        logging.debug("Non event notification message command "+str(cmd))
+        return (None,bytes[messageEnd:])
 
-    msgType = bytes[4]
-    payloadIn=bytes[5:]
+    msgType = bytes[messageStart+4]
+    payloadIn = bytes[messageStart+5:messageEnd]
 
-    return Message(msgType,payloadIn)
+    return (Message(msgType,payloadIn),bytes[messageEnd:])
 
 
 def encodeEventData(payload):
@@ -309,27 +336,18 @@ class AcaiaScale(object):
     def callback_queue(self,payload):
         #print('This is the queue')
         self.addBuffer(payload)
-        if len(self.packet)<=3:
-            return
 
-        try:
-            msg = decode(self.packet)
-        except:
-            logging.debug('msg error in decoding')
-            return
-        self.packet=None
-
-        if not msg:
-            logging.debug('characteristic value update, but no message')
-            return
-
-        if msg.msgType==5:
-            self.weight=msg.value
-            logging.debug('weight: ' + str(msg.value))
-        else:
-            logging.debug('non-weight response')
-            logging.debug(msg.value)
-            pass
+        while True:
+            (msg,self.packet) = decode(self.packet)
+            if not msg:
+                return
+            if msg.msgType==5:
+                self.weight=msg.value
+                logging.debug('weight: ' + str(msg.value)+' '+str(time.time()))
+            else:
+                logging.debug('non-weight response')
+                logging.debug(msg.value)
+                pass
 
 
     def connect(self):
