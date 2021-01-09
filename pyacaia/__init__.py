@@ -237,6 +237,18 @@ def encodeTare():
     payload = [0];
     return encode(4, payload)
 
+def encodeStartTimer():
+    payload = [0,0]
+    return encode(13, payload)
+
+def encodeStopTimer():
+    payload = [0,2]
+    return encode(13, payload)
+
+def encodeResetTimer():
+    payload = [0,1]
+    return encode(13, payload)
+
 class setInterval(Thread):
 
     def __init__(self,func,interval):
@@ -522,6 +534,29 @@ class AcaiaScale(object):
 
         return True
 
+    def startTimer(self):
+        if not self.connected:
+            return False
+        if self.backend=='bluepy':
+            self.char.write( encodeStartTimer(), withResponse=False)
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeStartTimer(),wait_for_response=False)
+
+    def stopTimer(self):
+        if not self.connected:
+            return False
+        if self.backend=='bluepy':
+            self.char.write( encodeStopTimer(), withResponse=False)
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeStopTimer(),wait_for_response=False)
+
+    def resetTimer(self):
+        if not self.connected:
+            return False
+        if self.backend=='bluepy':
+            self.char.write( encodeResetTimer(), withResponse=False)
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeResetTimer(),wait_for_response=False)
 
     def disconnect(self):
 
