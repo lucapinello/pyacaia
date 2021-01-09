@@ -255,8 +255,9 @@ class setInterval(Thread):
         self.keep_going=True
 
         while self.keep_going:
-
-            if not self.timer or not self.timer.isAlive():
+            if self.interval==0:
+                self.func()
+            elif not self.timer or not self.timer.isAlive():
                 self.timer=Timer(self.interval,self.func)
                 self.timer.start()
 
@@ -303,6 +304,7 @@ class AcaiaScale(object):
         self.packet=None
         self.weight = None
         self.set_interval_thread=None
+        self.last_heartbeat = 0
 
 
     def addBuffer(self,buffer2):
@@ -456,7 +458,13 @@ class AcaiaScale(object):
         logging.info('Scale Ready!')
         self.connected = True
         self.ident()
-        self.set_interval_thread=setInterval(self.heartbeat,5)
+        self.last_heartbeat = time.time()
+        if self.backend=='bluepy':
+            # For bluepy, use waitForNotifications() instead of Timer,
+            # see notes in heartbeat()
+            self.set_interval_thread=setInterval(self.heartbeat,0)
+        elif self.backend=='pygatt':
+            self.set_interval_thread=setInterval(self.heartbeat,5)
         self.set_interval_thread.start()
 
     def ident(self):
@@ -480,11 +488,25 @@ class AcaiaScale(object):
 
         try:
             if self.backend=='bluepy':
-                self.char.write(encodeHeartbeat(), withResponse=False)
+                # for bluepy, instead of waking up for a heartbeat, we 
+                # do a waitForNotifications so that notifications from heartbeat
+                # and notifications from waitForNotifications happen in the same
+                # thread.  setInterval object calls heartbeat() without any 
+                # timer delay
+                self.device.waitForNotifications(1)
+                if time.time() >= self.last_heartbeat+5:
+                    # The official app sends a more complex heartbeat to Pyxis, once per
+                    # second.  The Pyxis heartbeat has 3 messages:
+                    # encodeId(True), encodeHeartbeat(), encode(6,[0]*16).
+                    # But the Pyxis seems to work just fine with the single encodeHearbeat()
+                    # once every 5 seconds as in the earlier scales.
+                    self.last_heartbeat=time.time()
+                    self.char.write(encodeHeartbeat(), withResponse=False)
+                    logging.debug('Heartbeat success')
             elif self.backend=='pygatt':
                 self.device.char_write_handle(self.handle,encodeHeartbeat(),wait_for_response=False)
+                logging.debug('Heartbeat success')
 
-            logging.debug('Heartbeat success')
             return True
         except Exception as e:
             logging.debug('Heartbeat failed '+str(e))
