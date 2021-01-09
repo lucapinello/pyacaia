@@ -6,7 +6,8 @@ This code was inspired by the javascript version available here https://github.c
 
 ## 0. Requirements
 Linux, Python (>=2.7 or >=3.5) and  bluepy (https://github.com/lucapinello/bluepy)
-(pypygatt >=4.0.3 is also partially supported https://github.com/peplin/pygatt)
+(pygatt >=4.0.3 is also partially supported https://github.com/peplin/pygatt;
+ Pyxis not supported under pygatt)
 
 This package has been tested on a RasperryPI ZeroW with Raspbian GNU/Linux 9 (stretch)
 
@@ -32,7 +33,11 @@ This package has been tested on a RasperryPI ZeroW with Raspbian GNU/Linux 9 (st
 
     scale.disconnect()
 
-```    
+``` 
+API change:
+Pyacaia now calls bluepy's Peripheral.waitForNotifications() internally.
+If your application uses waitForNotications() directly, it should be removed.
+---
 
 By default the backend used is blupy, but also pygatt is supported. In that case use:
 
