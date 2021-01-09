@@ -345,9 +345,7 @@ class AcaiaScale(object):
                 self.weight=msg.value
                 logging.debug('weight: ' + str(msg.value)+' '+str(time.time()))
             else:
-                logging.debug('non-weight response')
-                logging.debug(msg.value)
-                pass
+                logging.debug('non-weight response: '+str(msg.msgType))
 
 
     def connect(self):
@@ -488,8 +486,8 @@ class AcaiaScale(object):
 
             logging.debug('Heartbeat success')
             return True
-        except:
-            logging.debug('Heartbeat failed')
+        except Exception as e:
+            logging.debug('Heartbeat failed '+str(e))
 
 
     def tare(self):
