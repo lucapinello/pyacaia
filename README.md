@@ -34,10 +34,10 @@ This package has been tested on a RasperryPI ZeroW with Raspbian GNU/Linux 9 (st
     scale.disconnect()
 
 ``` 
+
 API change:
-Pyacaia now calls bluepy's Peripheral.waitForNotifications() internally.
-If your application uses waitForNotications() directly, it should be removed.
----
+
+Pyacaia now calls bluepy's Peripheral.waitForNotifications() internally.  If your application uses waitForNotications() directly, it should be removed.
 
 By default the backend used is blupy, but also pygatt is supported. In that case use:
 
