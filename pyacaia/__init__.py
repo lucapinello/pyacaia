@@ -598,6 +598,7 @@ class AcaiaScale(object):
             return True
         except Exception as e:
             logging.debug('Heartbeat failed '+str(e))
+            return False
 
 
     def tare(self):
@@ -640,11 +641,12 @@ class AcaiaScale(object):
         if self.device:
 
             if self.backend=='pygatt':
-
                 self.device.disconnect()
                 self.adapter.stop()
 
             elif self.backend=='bluepy':
+                self.set_interval_thread.stop()
+                time.sleep(0.2)
                 self.device.disconnect()
         self.set_interval_thread.stop()
 
