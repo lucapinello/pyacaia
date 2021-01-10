@@ -123,6 +123,10 @@ class Message(object):
             logging.debug('heartbeat response (weight: '+str(self.value)+')'
                             +' '+str(payload[0:3]))
 
+        elif self.msgType==7:
+            self.time = self._decode_time(payload)
+            logging.debug('timer: '+str(self.time))
+
         elif self.msgType==8:
             if payload[0]==0 and payload[1]==5:
                 self.button='tare'
@@ -145,6 +149,7 @@ class Message(object):
             else:
                 self.button='unknownbutton'
                 logging.debug('unknownbutton '+str(payload))
+
 
         else: 
             logging.debug('message '+str(msgType)+': %s' %payload)
@@ -172,10 +177,10 @@ class Settings(object):
     
     def __init__(self,payload):
         # payload[0] is unknown
-        self.battery = payload[1]
-        if payload[1]==2:
+        self.battery = payload[1] & 0x7F
+        if payload[2]==2:
             self.units = 'grams'
-        elif payload[1]==5:
+        elif payload[2]==5:
             self.units = 'ounces'
         else:
             self.units = None
@@ -186,7 +191,8 @@ class Settings(object):
         # payload[7-9] unknown
         logging.debug('settings: battery='+str(self.battery)+' '+str(self.units)
                 +' auto_off='+str(self.auto_off)+' beep='+str(self.beep_on))
-        logging.debug('unknown: '+str([payload[0],payload[2],payload[3],payload[5],payload[7],payload[8], payload[9]]))
+        logging.debug('unknown settings: '+str([payload[0],payload[1]&0x80,payload[3],
+                      payload[5],payload[7],payload[8], payload[9]]))
 
 
 def encode(msgType,payload):
@@ -298,6 +304,11 @@ def encodeHeartbeat():
 def encodeTare():
     payload = [0];
     return encode(4, payload)
+
+def encodeGetSettings():
+    """Settings are returned as a notification"""
+    payload = [0]*16
+    return encode(6,payload)
 
 def encodeStartTimer():
     payload = [0,0]
@@ -594,12 +605,17 @@ class AcaiaScale(object):
                 self.device.waitForNotifications(1)
                 if time.time() >= self.last_heartbeat+5:
                     # The official app sends a more complex heartbeat to Pyxis, once per
-                    # second.  The Pyxis heartbeat has 3 messages:
-                    # encodeId(True), encodeHeartbeat(), encode(6,[0]*16).
+                    # second.  Not sure if this complex heartbeat is sent to
+                    # older scales.  The Pyxis heartbeat has 3 messages:
+                    # encodeId(True), encodeHeartbeat(), encodeGetSettings()
                     # But the Pyxis seems to work just fine with the single encodeHearbeat()
                     # once every 5 seconds as in the earlier scales.
                     self.last_heartbeat=time.time()
+                    if self.isPyxisStyle:
+                        self.char.write(encodeId(self.isPyxisStyle))
                     self.char.write(encodeHeartbeat(), withResponse=False)
+                    if self.isPyxisStyle:
+                        self.char.write(encodeGetSettings(), withResponse=False)
                     logging.debug('Heartbeat success')
             elif self.backend=='pygatt':
                 self.device.char_write_handle(self.handle,encodeHeartbeat(),wait_for_response=False)
