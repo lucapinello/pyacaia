@@ -446,11 +446,21 @@ class AcaiaScale(object):
         self.queue= Queue(self.callback_queue)
 
         if self.backend=='bluepy':
-            self.device=self.backend_class.Peripheral(self.mac, addrType=self.backend_class.ADDR_TYPE_PUBLIC)
+            start_connection_time = time.time()
+            while not self.device:
+                try:
+                    self.device=self.backend_class.Peripheral(self.mac, addrType=self.backend_class.ADDR_TYPE_PUBLIC)
+                    # MTU of 247 required by Pyxis for long notification payloads,
+                    # not sure if it is needed for older scales
+                    self.device.setMTU(247)
+                except Exception as e:
+                    self.device = None
+                    logging.debug("Failed connection attempt "+str(e))
+                    # GIve up after 10 seconds, probably the scale is not on
+                    if time.time()-start_connection_time > 10:
+                        raise e
+            logging.debug('created device')
             self.device=self.device.withDelegate(self)
-            # MTU of 247 required by Pyxis for long notification payloads,
-            # not sure if it is needed for older scales
-            self.device.setMTU(247)
             foundCommandChar=False
             foundWeightChar=False
             pyxisWeightChar=None
