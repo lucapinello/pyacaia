@@ -9,7 +9,7 @@ __version__ = "0.3.0"
 
 import logging
 import time
-from threading import Thread, Timer
+from threading import Thread, Timer, Lock
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
@@ -105,6 +105,24 @@ class Queue(object):
     def next(self):
         return dequeue(self)
 
+class CommandQueue(object):
+    
+    def __init__(self):
+        self.queue=[]
+        self.mutex=Lock()
+
+    def add(self,packet):
+        self.mutex.acquire()
+        self.queue.append(packet)
+        self.mutex.release()
+
+    def dequeue(self):
+        packet = None
+        self.mutex.acquire()
+        if self.queue:
+            packet=self.queue.pop(0)
+        self.mutex.release()
+        return packet
 
 class Message(object):
 
@@ -386,6 +404,7 @@ class AcaiaScale(object):
         self.handle=None
 
         self.queue = None
+        self.command_queue = CommandQueue()
         self.packet=None
         self.set_interval_thread=None
         self.last_heartbeat = 0
@@ -470,7 +489,6 @@ class AcaiaScale(object):
                     # GIve up after 10 seconds, probably the scale is not on
                     if time.time()-start_connection_time > 10:
                         raise e
-            logging.debug('created device')
             self.device=self.device.withDelegate(self)
             foundCommandChar=False
             foundWeightChar=False
@@ -603,6 +621,13 @@ class AcaiaScale(object):
                 # thread.  setInterval object calls heartbeat() without any 
                 # timer delay
                 self.device.waitForNotifications(1)
+                while True:
+                    # Send queued up commands in this heartbeat thread
+                    packet = self.command_queue.dequeue()
+                    if packet: 
+                        self.char.write(packet,withResponse=False)
+                    else:
+                        break
                 if time.time() >= self.last_heartbeat+5:
                     # The official app sends a more complex heartbeat to Pyxis, once per
                     # second.  Not sure if this complex heartbeat is sent to
@@ -631,7 +656,7 @@ class AcaiaScale(object):
         if not self.connected:
             return False
         if self.backend=='bluepy':
-            self.char.write( encodeTare(), withResponse=False)
+            self.command_queue.add(encodeTare())
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeTare(),wait_for_response=False)
 
@@ -641,7 +666,7 @@ class AcaiaScale(object):
         if not self.connected:
             return False
         if self.backend=='bluepy':
-            self.char.write( encodeStartTimer(), withResponse=False)
+            self.command_queue.add(encodeStartTimer())
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeStartTimer(),wait_for_response=False)
 
@@ -649,7 +674,7 @@ class AcaiaScale(object):
         if not self.connected:
             return False
         if self.backend=='bluepy':
-            self.char.write( encodeStopTimer(), withResponse=False)
+            self.command_queue.add(encodeStopTimer())
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeStopTimer(),wait_for_response=False)
 
@@ -657,7 +682,7 @@ class AcaiaScale(object):
         if not self.connected:
             return False
         if self.backend=='bluepy':
-            self.char.write( encodeResetTimer(), withResponse=False)
+            self.command_queue.add(encodeResetTimer())
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeResetTimer(),wait_for_response=False)
 
