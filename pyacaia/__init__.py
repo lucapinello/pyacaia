@@ -137,9 +137,11 @@ class Message(object):
             self.value=self._decode_weight(payload)
 
         elif self.msgType==11:
-            self.value=self._decode_weight(payload[3:])
-            logging.debug('heartbeat response (weight: '+str(self.value)+')'
-                            +' '+str(payload[0:3]))
+            if payload[2]==5:
+                self.value=self._decode_weight(payload[3:])
+            elif payload[2]==7:
+                self.time=self._decode_time(payload[3:])
+            logging.debug('heartbeat response (weight: '+str(self.value)+' time: '+str(self.time))
 
         elif self.msgType==7:
             self.time = self._decode_time(payload)
@@ -299,7 +301,7 @@ def encodeNotificationRequest():
     	1,  # battery
     	2,  # battery argument
     	2,  # timer
-    	5,  # timer argument
+    	5,  # timer argument (number heartbeats between timer messages)
     	3,  # key
     	4   # setting
     ]
@@ -408,6 +410,11 @@ class AcaiaScale(object):
         self.packet=None
         self.set_interval_thread=None
         self.last_heartbeat = 0
+        self.timer_start_time = 0
+        self.paused_time = 0
+        # Number of seconds of delay in transmitting 
+        # the time from the scale
+        self.transit_delay = 0.2
 
         # weight in the units given
         self.weight = None
@@ -419,6 +426,16 @@ class AcaiaScale(object):
         self.auto_off = None
         # if true, the scale will beep 
         self.beep_on = None
+        # if true, timer is running
+        self.timer_running = False
+
+
+    def get_elapsed_time(self):
+        """Return the time displayed on the timer, in seconds"""
+        if self.timer_running:
+            return time.time()-self.timer_start_time+self.transit_delay
+        else:
+            return self.paused_time
 
 
     def addBuffer(self,buffer2):
@@ -466,6 +483,18 @@ class AcaiaScale(object):
                 if msg.msgType==5:
                     self.weight=msg.value
                     logging.debug('weight: ' + str(msg.value)+' '+str(time.time()))
+                elif msg.msgType==7:
+                    self.timer_start_time=time.time()-msg.time
+                    self.timer_running=True
+                elif msg.msgType==8 and msg.button=='start':
+                    self.timer_start_time=time.time()-self.paused_time+self.transit_delay
+                    self.timer_running=True
+                elif msg.msgType==8 and msg.button=='stop':
+                    self.paused_time = msg.time
+                    self.timer_running=False
+                elif msg.msgType==8 and msg.button=='reset':
+                    self.paused_time = 0
+                    self.timer_running=False
 
 
     def connect(self):
@@ -628,7 +657,7 @@ class AcaiaScale(object):
                         self.char.write(packet,withResponse=False)
                     else:
                         break
-                if time.time() >= self.last_heartbeat+5:
+                if time.time() >= self.last_heartbeat+1:
                     # The official app sends a more complex heartbeat to Pyxis, once per
                     # second.  Not sure if this complex heartbeat is sent to
                     # older scales.  The Pyxis heartbeat has 3 messages:
@@ -639,8 +668,9 @@ class AcaiaScale(object):
                     if self.isPyxisStyle:
                         self.char.write(encodeId(self.isPyxisStyle))
                     self.char.write(encodeHeartbeat(), withResponse=False)
-                    if self.isPyxisStyle:
-                        self.char.write(encodeGetSettings(), withResponse=False)
+                    # We get settings with the encodeId(), so commenting ths out for now
+                    #if self.isPyxisStyle:
+                    #    self.char.write(encodeGetSettings(), withResponse=False)
                     logging.debug('Heartbeat success')
             elif self.backend=='pygatt':
                 self.device.char_write_handle(self.handle,encodeHeartbeat(),wait_for_response=False)
@@ -669,6 +699,8 @@ class AcaiaScale(object):
             self.command_queue.add(encodeStartTimer())
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeStartTimer(),wait_for_response=False)
+        self.timer_start_time = time.time()
+        self.timer_running=True
 
     def stopTimer(self):
         if not self.connected:
@@ -678,6 +710,9 @@ class AcaiaScale(object):
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeStopTimer(),wait_for_response=False)
 
+        self.paused_time = time.time()-self.timer_start_time
+        self.timer_running=False
+
     def resetTimer(self):
         if not self.connected:
             return False
@@ -685,6 +720,8 @@ class AcaiaScale(object):
             self.command_queue.add(encodeResetTimer())
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeResetTimer(),wait_for_response=False)
+        self.paused_time=0
+        self.timer_running=False
 
     def disconnect(self):
 
