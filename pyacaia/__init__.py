@@ -361,12 +361,12 @@ class setInterval(Thread):
 
         while self.keep_going:
             if self.interval==0:
-                self.func()
+                if not self.func():
+                    break
+                    return
             elif not self.timer or not self.timer.isAlive():
                 self.timer=Timer(self.interval,self.func)
                 self.timer.start()
-
-
 class AcaiaScale(object):
 
     def __init__(self,mac,char_uuid=None,backend='bluepy',iface='hci0',weight_uuid=None):
@@ -593,8 +593,8 @@ class AcaiaScale(object):
             self.device.subscribe(self.char_uuid, self.characteristicValueChanged)
             self.handle=self.device.get_handle(self.char_uuid)
 
-        time.sleep(0.5)
         self.notificationsReady()
+        time.sleep(0.5)
 
     def auto_connect(self):
         if self.connected:
@@ -611,10 +611,10 @@ class AcaiaScale(object):
             logging.info('No ACAIA scale found')
 
     def notificationsReady(self):
-        logging.info('Scale Ready!')
-        self.connected = True
         self.ident()
         self.last_heartbeat = time.time()
+        logging.info('Scale Ready!')
+        self.connected = True
         if self.backend=='bluepy':
             # For bluepy, use waitForNotifications() instead of Timer,
             # see notes in heartbeat()
@@ -624,10 +624,6 @@ class AcaiaScale(object):
         self.set_interval_thread.start()
 
     def ident(self):
-
-        if not self.connected:
-            return False
-
         if self.backend=='bluepy':
             self.char.write(encodeId(self.isPyxisStyle), withResponse=False)
             self.char.write(encodeNotificationRequest(), withResponse=False)
@@ -679,7 +675,10 @@ class AcaiaScale(object):
             return True
         except Exception as e:
             logging.debug('Heartbeat failed '+str(e))
-            return False
+            try:
+                self.disconnect()
+            except:
+                return False
 
 
     def tare(self):
