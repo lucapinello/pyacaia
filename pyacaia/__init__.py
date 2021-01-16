@@ -3,6 +3,7 @@
 # Copyright (c) 2019 Luca Pinello
 # Released under GPLv3
 #This code is based on the javascript version available here https://github.com/bpowers/btscale
+# Updated for the Pyxis scale by Dan Bodoh
 
 __version__ = "0.3.0"
 
@@ -32,7 +33,10 @@ def find_acaia_devices(timeout=3,backend='bluepy'):
             devices=adapter.scan(timeout=timeout,run_as_root=True)
             addresses=[]
             for d in devices:
-                if d['name'] and d['name'].startswith('ACAIA'):
+                if (d['name'] 
+                    and (d['name'].startswith('ACAIA')
+                        or d['name'].startswith('PYXIS')
+                        or d['name'].startswith('PROCH'))):
                     print (d['name'],d['address'])
                     addresses.append(d['address'])
             adapter.stop()
@@ -55,7 +59,11 @@ def find_acaia_devices(timeout=3,backend='bluepy'):
             addresses=[]
             for dev in devices:
                 for (adtype, desc, value) in dev.getScanData():
-                    if desc=='Complete Local Name' and value.startswith('ACAIA'):
+                    if (desc=='Complete Local Name' 
+                        and (value.startswith('ACAIA')
+                             or value.startswith('PYXIS')
+                             or value.startswith('PROCH'))):
+
                         print(value, dev.addr)
                         addresses.append(dev.addr)
 
@@ -146,19 +154,46 @@ def encode(msgType,payload):
 
 
 def decode(bytes):
-    if (bytes[0] != HEADER1 and bytes[1] != HEADER2):
-        return
+    """Return a tuple - first element is the message, or None
+       if one not yet found.  Second is are the remaining
+       bytes, which can be empty
+       Messages are encoded as the encode() function above,
+       min message length is 6 bytes
+       HEADER1 (0xef)
+       HEADER1 (0xdd)
+       command 
+       length  (including this byte, excluding checksum)
+       payload of length-1 bytes
+       checksum byte1
+       checksum byte2
+       
+    """
+    messageStart = -1
+   
+    for i in range(len(bytes)-1):
+        if bytes[i]==HEADER1 and bytes[i+1]==HEADER2:
+            messageStart=i
+            break
+    if messageStart<0 or len(bytes)-messageStart<6:
+        return (None,bytes)
 
-    cmd = bytes[2]
+    messageEnd  = messageStart+bytes[messageStart+3]+5
 
+    if messageEnd>len(bytes):
+        return (None,bytes)
+
+    if messageStart>0:
+        logging.debug("Ignoring "+str(i)+" bytes before header")
+
+    cmd = bytes[messageStart+2]
     if (cmd !=12):
-        logging.debug("Non event notification message:%s" %bytes)
-        return
+        logging.debug("Non event notification message command "+str(cmd))
+        return (None,bytes[messageEnd:])
 
-    msgType = bytes[4]
-    payloadIn=bytes[5:]
+    msgType = bytes[messageStart+4]
+    payloadIn = bytes[messageStart+5:messageEnd]
 
-    return Message(msgType,payloadIn)
+    return (Message(msgType,payloadIn),bytes[messageEnd:])
 
 
 def encodeEventData(payload):
@@ -185,8 +220,11 @@ def encodeNotificationRequest():
     return encodeEventData(payload)
 
 
-def encodeId():
-    payload = bytearray([0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d])
+def encodeId(isPyxisStyle=False):
+    if isPyxisStyle:
+        payload = bytearray([0x30,0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x30,0x31,0x32,0x33,0x34])
+    else:
+        payload = bytearray([0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d,0x2d])
     return encode(11,payload)
 
 
@@ -217,15 +255,20 @@ class setInterval(Thread):
         self.keep_going=True
 
         while self.keep_going:
-
-            if not self.timer or not self.timer.isAlive():
+            if self.interval==0:
+                self.func()
+            elif not self.timer or not self.timer.isAlive():
                 self.timer=Timer(self.interval,self.func)
                 self.timer.start()
 
 
 class AcaiaScale(object):
 
-    def __init__(self,mac,char_uuid="00002a80-0000-1000-8000-00805f9b34fb",backend='bluepy',iface='hci0'):
+    def __init__(self,mac,char_uuid=None,backend='bluepy',iface='hci0',weight_uuid=None):
+        """For Pyxis-style devices, the UUIDs can be overridden.  char_uuid
+           is the command UUID, and weight_uuid is where the notify comes
+           from.  Old-style scales only specify char_uuid
+        """
 
         if backend=='pygatt':
             try:
@@ -252,6 +295,8 @@ class AcaiaScale(object):
         self.connected = False
 
         self.char_uuid=char_uuid
+        self.weight_uuid=weight_uuid
+        self.isPyxisStyle=(char_uuid and weight_uuid)
         self.char=None
         self.handle=None
 
@@ -259,6 +304,7 @@ class AcaiaScale(object):
         self.packet=None
         self.weight = None
         self.set_interval_thread=None
+        self.last_heartbeat = 0
 
 
     def addBuffer(self,buffer2):
@@ -292,26 +338,16 @@ class AcaiaScale(object):
     def callback_queue(self,payload):
         #print('This is the queue')
         self.addBuffer(payload)
-        if len(self.packet)<=3:
-            return
-        try:
-            msg = decode(self.packet)
-        except:
-            logging.debug('msg error in decoding')
-            return
-        self.packet=None
 
-        if not msg:
-            logging.debug('characteristic value update, but no message')
-            return
-
-        if msg.msgType==5:
-            self.weight=msg.value
-            logging.debug('weight: ' + str(msg.value))
-        else:
-            logging.debug('non-weight response')
-            logging.debug(msg.value)
-            pass
+        while True:
+            (msg,self.packet) = decode(self.packet)
+            if not msg:
+                return
+            if msg.msgType==5:
+                self.weight=msg.value
+                logging.debug('weight: ' + str(msg.value)+' '+str(time.time()))
+            else:
+                logging.debug('non-weight response: '+str(msg.msgType))
 
 
     def connect(self):
@@ -324,10 +360,76 @@ class AcaiaScale(object):
         if self.backend=='bluepy':
             self.device=self.backend_class.Peripheral(self.mac, addrType=self.backend_class.ADDR_TYPE_PUBLIC)
             self.device=self.device.withDelegate(self)
-            self.char=self.device.getCharacteristics(uuid=self.char_uuid)[0]
-            self.device.writeCharacteristic(14,bytearray([0x01,0x00]))
+            # MTU of 247 required by Pyxis for long notification payloads,
+            # not sure if it is needed for older scales
+            self.device.setMTU(247)
+            foundCommandChar=False
+            foundWeightChar=False
+            pyxisWeightChar=None
+
+            if self.char_uuid:
+                self.char=self.device.getCharacteristics(uuid=self.char_uuid)[0]
+                foundCommandChar=True
+                self.isPyxisStyle=False
+                if self.weight_uuid:
+                    pyxisWeightChar=self.device.getCharacteristics(uuid=self.weight_uuid)[0]
+                    self.isPyxisStyle=True
+                logging.debug("Overriding characteristic UUIDs from constructor")
+                foundWeightChar=True
+            else:
+                from bluepy.btle import UUID
+                # Get all the characteristics to decide if we 
+                # are connecting to an older scale or or a new Pyxis
+                characteristics = self.device.getCharacteristics()
+                pyxisWeightChar = None
+                for char in characteristics:
+                    if char.uuid==UUID('49535343-8841-43f4-a8d4-ecbe34729bb3'):
+                        logging.debug("Has Pyxis-style command char")
+                        self.char = char
+                        self.char_uuid = str(self.char.uuid)
+                        self.isPyxisStyle=True
+                        foundCommandChar=True
+                    elif char.uuid==UUID('49535343-1e4d-4bd9-ba61-23c647249616'):
+                        logging.debug("Has Pyxis-style weight char")
+                        pyxisWeightChar = char
+                        self.weight_uuid = str(pyxisWeightChar.uuid)
+                        foundWeightChar=True
+                    elif char.uuid==UUID('00002a80-0000-1000-8000-00805f9b34fb'):
+                        logging.debug("Has old-style char")
+                        self.char = char
+                        self.char_uuid = str(self.char.uuid)
+                        # command and weight in the same characteristic
+                        self.isPyxisStyle=False
+                        foundCommandChar=True
+                        foundWeightChar=True
+
+            if not foundCommandChar:
+                raise Exception("Could not find command characteristic")
+
+            # Subscribe to notifications
+            if self.isPyxisStyle:
+                notifyDescriptors = pyxisWeightChar.getDescriptors(forUUID='2902',
+                        hndEnd=pyxisWeightChar.valHandle+3)
+                if notifyDescriptors:
+                    self.device.writeCharacteristic(
+                         notifyDescriptors[0].handle,
+                         bytearray([0x01,0x00]),True)
+                    foundWeightChar=True
+            else:
+                # Old-style scale: Hardcoded write to client config descriptor
+                # which uses the same characteristic as the command
+                # characteristic.  Instead of hardcoding,
+                # this could probably be done like the Pyxis style
+                self.device.writeCharacteristic(14,bytearray([0x01,0x00]))
+                foundWeightChar=True
+
+            if not foundWeightChar:
+                raise Exception("Could not find weight characteristic");
 
         elif self.backend=='pygatt':
+            # Only old-style supported with pygatt now
+            if not self.char_uuid:
+                self.char_uuid='00002a80-0000-1000-8000-00805f9b34fb'
             self.adapter = self.backend_class(self.iface)
             self.adapter.reset()
             self.adapter.start(False)
@@ -356,7 +458,13 @@ class AcaiaScale(object):
         logging.info('Scale Ready!')
         self.connected = True
         self.ident()
-        self.set_interval_thread=setInterval(self.heartbeat,5)
+        self.last_heartbeat = time.time()
+        if self.backend=='bluepy':
+            # For bluepy, use waitForNotifications() instead of Timer,
+            # see notes in heartbeat()
+            self.set_interval_thread=setInterval(self.heartbeat,0)
+        elif self.backend=='pygatt':
+            self.set_interval_thread=setInterval(self.heartbeat,5)
         self.set_interval_thread.start()
 
     def ident(self):
@@ -365,10 +473,10 @@ class AcaiaScale(object):
             return False
 
         if self.backend=='bluepy':
-            self.char.write(encodeId(), withResponse=False)
+            self.char.write(encodeId(self.isPyxisStyle), withResponse=False)
             self.char.write(encodeNotificationRequest(), withResponse=False)
         elif self.backend=='pygatt':
-            self.device.char_write(self.char_uuid,encodeId(),wait_for_response=False)
+            self.device.char_write(self.char_uuid,encodeId(self.isPyxisStyle),wait_for_response=False)
             self.device.char_write(self.char_uuid,encodeNotificationRequest(),wait_for_response=False)
 
         return True
@@ -380,14 +488,28 @@ class AcaiaScale(object):
 
         try:
             if self.backend=='bluepy':
-                self.char.write(encodeHeartbeat(), withResponse=False)
+                # for bluepy, instead of waking up for a heartbeat, we 
+                # do a waitForNotifications so that notifications from heartbeat
+                # and notifications from waitForNotifications happen in the same
+                # thread.  setInterval object calls heartbeat() without any 
+                # timer delay
+                self.device.waitForNotifications(1)
+                if time.time() >= self.last_heartbeat+5:
+                    # The official app sends a more complex heartbeat to Pyxis, once per
+                    # second.  The Pyxis heartbeat has 3 messages:
+                    # encodeId(True), encodeHeartbeat(), encode(6,[0]*16).
+                    # But the Pyxis seems to work just fine with the single encodeHearbeat()
+                    # once every 5 seconds as in the earlier scales.
+                    self.last_heartbeat=time.time()
+                    self.char.write(encodeHeartbeat(), withResponse=False)
+                    logging.debug('Heartbeat success')
             elif self.backend=='pygatt':
                 self.device.char_write_handle(self.handle,encodeHeartbeat(),wait_for_response=False)
+                logging.debug('Heartbeat success')
 
-            logging.debug('Heartbeat success')
             return True
-        except:
-            logging.debug('Heartbeat failed')
+        except Exception as e:
+            logging.debug('Heartbeat failed '+str(e))
 
 
     def tare(self):
