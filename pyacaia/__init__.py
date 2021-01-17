@@ -5,7 +5,7 @@
 #This code is based on the javascript version available here https://github.com/bpowers/btscale
 # Updated for the Pyxis scale by Dan Bodoh
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 import logging
 import time
@@ -734,6 +734,7 @@ class AcaiaScale(object):
             elif self.backend=='bluepy':
                 self.device.disconnect()
         self.set_interval_thread.stop()
+        self.set_interval_thread.join()
 
 
 
@@ -758,7 +759,6 @@ def main():
         time.sleep(0.5)
 
     scale.disconnect()
-    time.sleep(5)
 
 if __name__ == '__main__':
     main()
