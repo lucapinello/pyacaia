@@ -732,8 +732,6 @@ class AcaiaScale(object):
                 self.adapter.stop()
 
             elif self.backend=='bluepy':
-                self.set_interval_thread.stop()
-                time.sleep(0.2)
                 self.device.disconnect()
         self.set_interval_thread.stop()
 
