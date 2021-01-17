@@ -9,7 +9,7 @@ __version__ = "0.4.0"
 
 import logging
 import time
-from threading import Thread, Timer
+from threading import Thread, Timer, Lock
 
 root = logging.getLogger()
 root.setLevel(logging.INFO)
@@ -105,6 +105,24 @@ class Queue(object):
     def next(self):
         return dequeue(self)
 
+class CommandQueue(object):
+    
+    def __init__(self):
+        self.queue=[]
+        self.mutex=Lock()
+
+    def add(self,packet):
+        self.mutex.acquire()
+        self.queue.append(packet)
+        self.mutex.release()
+
+    def dequeue(self):
+        packet = None
+        self.mutex.acquire()
+        if self.queue:
+            packet=self.queue.pop(0)
+        self.mutex.release()
+        return packet
 
 class Message(object):
 
@@ -112,21 +130,89 @@ class Message(object):
         self.msgType=msgType
         self.payload=payload
         self.value=None
+        self.button=None
+        self.time=None
 
-        if (self.msgType ==5):
-            value= ((payload[1] & 0xff) << 8) + (payload[0] & 0xff)
-            unit=  payload[4] & 0xFF;
+        if self.msgType==5:
+            self.value=self._decode_weight(payload)
 
-            if (unit == 1): value /= 10.0
-            elif (unit == 2): value /= 100.0
-            elif (unit == 3): value /= 1000.0
-            elif (unit == 4): value /= 10000.0
-            else: raise Exception('unit value not in range %d:' % unit)
+        elif self.msgType==11:
+            if payload[2]==5:
+                self.value=self._decode_weight(payload[3:])
+            elif payload[2]==7:
+                self.time=self._decode_time(payload[3:])
+            logging.debug('heartbeat response (weight: '+str(self.value)+' time: '+str(self.time))
 
-            if ((payload[5] & 0x02) == 0x02):
-                value *= -1
+        elif self.msgType==7:
+            self.time = self._decode_time(payload)
+            logging.debug('timer: '+str(self.time))
 
-            self.value=value
+        elif self.msgType==8:
+            if payload[0]==0 and payload[1]==5:
+                self.button='tare'
+                self.value=self._decode_weight(payload[2:])
+                logging.debug('tare (weight: '+str(self.value)+')')
+            elif payload[0]==8 and payload[1]==5:
+                self.button='start'
+                self.value=self._decode_weight(payload[2:])
+                logging.debug('start (weight: '+str(self.value)+')')
+            elif payload[0]==10 and payload[1]==7:
+                self.button='stop'
+                self.time = self._decode_time(payload[2:])
+                self.value = self._decode_weight(payload[6:])
+                logging.debug('stop time: '+str(self.time)+' weight: '+str(self.value))
+            elif payload[0]==9 and payload[1]==7:
+                self.button='reset'
+                self.time = self._decode_time(payload[2:])
+                self.value = self._decode_weight(payload[6:])
+                logging.debug('reset time: '+str(self.time)+' weight: '+str(self.value))
+            else:
+                self.button='unknownbutton'
+                logging.debug('unknownbutton '+str(payload))
+
+
+        else: 
+            logging.debug('message '+str(msgType)+': %s' %payload)
+
+    def _decode_weight(self,weight_payload):
+        value= ((weight_payload[1] & 0xff) << 8) + (weight_payload[0] & 0xff)
+        unit=  weight_payload[4] & 0xFF;
+        if (unit == 1): value /= 10.0
+        elif (unit == 2): value /= 100.0
+        elif (unit == 3): value /= 1000.0
+        elif (unit == 4): value /= 10000.0
+        else: raise Exception('unit value not in range %d:' % unit)
+
+        if ((weight_payload[5] & 0x02) == 0x02):
+            value *= -1
+        return value
+
+    def _decode_time(self,time_payload):
+        value = (time_payload[0] & 0xff) * 60
+        value = value + (time_payload[1])
+        value = value + (time_payload[2] / 10.0)
+        return value
+
+class Settings(object):
+    
+    def __init__(self,payload):
+        # payload[0] is unknown
+        self.battery = payload[1] & 0x7F
+        if payload[2]==2:
+            self.units = 'grams'
+        elif payload[2]==5:
+            self.units = 'ounces'
+        else:
+            self.units = None
+        # payload[2 and 3] is unknown
+        self.auto_off = payload[4] * 5
+        # payload[5] is unknown
+        self.beep_on = payload[6]==1
+        # payload[7-9] unknown
+        logging.debug('settings: battery='+str(self.battery)+' '+str(self.units)
+                +' auto_off='+str(self.auto_off)+' beep='+str(self.beep_on))
+        logging.debug('unknown settings: '+str([payload[0],payload[1]&0x80,payload[3],
+                      payload[5],payload[7],payload[8], payload[9]]))
 
 
 def encode(msgType,payload):
@@ -186,14 +272,16 @@ def decode(bytes):
         logging.debug("Ignoring "+str(i)+" bytes before header")
 
     cmd = bytes[messageStart+2]
-    if (cmd !=12):
-        logging.debug("Non event notification message command "+str(cmd))
-        return (None,bytes[messageEnd:])
+    if cmd==12:
+        msgType = bytes[messageStart+4]
+        payloadIn = bytes[messageStart+5:messageEnd]
+        return (Message(msgType,payloadIn),bytes[messageEnd:])
+    if cmd==8:
+        return (Settings(bytes[messageStart+3:]),bytes[messageEnd:])
 
-    msgType = bytes[messageStart+4]
-    payloadIn = bytes[messageStart+5:messageEnd]
-
-    return (Message(msgType,payloadIn),bytes[messageEnd:])
+    logging.debug("Non event notification message command "+str(cmd)+' '
+                +str(bytes[messageStart:messageEnd]))
+    return (None,bytes[messageEnd:])
 
 
 def encodeEventData(payload):
@@ -213,7 +301,7 @@ def encodeNotificationRequest():
     	1,  # battery
     	2,  # battery argument
     	2,  # timer
-    	5,  # timer argument
+    	5,  # timer argument (number heartbeats between timer messages)
     	3,  # key
     	4   # setting
     ]
@@ -237,6 +325,23 @@ def encodeTare():
     payload = [0];
     return encode(4, payload)
 
+def encodeGetSettings():
+    """Settings are returned as a notification"""
+    payload = [0]*16
+    return encode(6,payload)
+
+def encodeStartTimer():
+    payload = [0,0]
+    return encode(13, payload)
+
+def encodeStopTimer():
+    payload = [0,2]
+    return encode(13, payload)
+
+def encodeResetTimer():
+    payload = [0,1]
+    return encode(13, payload)
+
 class setInterval(Thread):
 
     def __init__(self,func,interval):
@@ -256,12 +361,12 @@ class setInterval(Thread):
 
         while self.keep_going:
             if self.interval==0:
-                self.func()
+                if not self.func():
+                    break
+                    return
             elif not self.timer or not self.timer.isAlive():
                 self.timer=Timer(self.interval,self.func)
                 self.timer.start()
-
-
 class AcaiaScale(object):
 
     def __init__(self,mac,char_uuid=None,backend='bluepy',iface='hci0',weight_uuid=None):
@@ -301,10 +406,36 @@ class AcaiaScale(object):
         self.handle=None
 
         self.queue = None
+        self.command_queue = CommandQueue()
         self.packet=None
-        self.weight = None
         self.set_interval_thread=None
         self.last_heartbeat = 0
+        self.timer_start_time = 0
+        self.paused_time = 0
+        # Number of seconds of delay in transmitting 
+        # the time from the scale
+        self.transit_delay = 0.2
+
+        # weight in the units given
+        self.weight = None
+        # battery level in percent
+        self.battery = None
+        # Units is 'grams' or 'ounces'
+        self.units = None
+        # number of minutes for scale turns off automatically
+        self.auto_off = None
+        # if true, the scale will beep 
+        self.beep_on = None
+        # if true, timer is running
+        self.timer_running = False
+
+
+    def get_elapsed_time(self):
+        """Return the time displayed on the timer, in seconds"""
+        if self.timer_running:
+            return time.time()-self.timer_start_time+self.transit_delay
+        else:
+            return self.paused_time
 
 
     def addBuffer(self,buffer2):
@@ -343,11 +474,27 @@ class AcaiaScale(object):
             (msg,self.packet) = decode(self.packet)
             if not msg:
                 return
-            if msg.msgType==5:
-                self.weight=msg.value
-                logging.debug('weight: ' + str(msg.value)+' '+str(time.time()))
-            else:
-                logging.debug('non-weight response: '+str(msg.msgType))
+            if isinstance(msg,Settings):
+                self.battery = msg.battery
+                self.units = msg.units
+                self.auto_off = msg.auto_off
+                self.beep_on = msg.beep_on
+            elif isinstance(msg,Message):
+                if msg.msgType==5:
+                    self.weight=msg.value
+                    logging.debug('weight: ' + str(msg.value)+' '+str(time.time()))
+                elif msg.msgType==7:
+                    self.timer_start_time=time.time()-msg.time
+                    self.timer_running=True
+                elif msg.msgType==8 and msg.button=='start':
+                    self.timer_start_time=time.time()-self.paused_time+self.transit_delay
+                    self.timer_running=True
+                elif msg.msgType==8 and msg.button=='stop':
+                    self.paused_time = msg.time
+                    self.timer_running=False
+                elif msg.msgType==8 and msg.button=='reset':
+                    self.paused_time = 0
+                    self.timer_running=False
 
 
     def connect(self):
@@ -358,11 +505,20 @@ class AcaiaScale(object):
         self.queue= Queue(self.callback_queue)
 
         if self.backend=='bluepy':
-            self.device=self.backend_class.Peripheral(self.mac, addrType=self.backend_class.ADDR_TYPE_PUBLIC)
+            start_connection_time = time.time()
+            while not self.device:
+                try:
+                    self.device=self.backend_class.Peripheral(self.mac, addrType=self.backend_class.ADDR_TYPE_PUBLIC)
+                    # MTU of 247 required by Pyxis for long notification payloads,
+                    # not sure if it is needed for older scales
+                    self.device.setMTU(247)
+                except Exception as e:
+                    self.device = None
+                    logging.debug("Failed connection attempt "+str(e))
+                    # GIve up after 10 seconds, probably the scale is not on
+                    if time.time()-start_connection_time > 10:
+                        raise e
             self.device=self.device.withDelegate(self)
-            # MTU of 247 required by Pyxis for long notification payloads,
-            # not sure if it is needed for older scales
-            self.device.setMTU(247)
             foundCommandChar=False
             foundWeightChar=False
             pyxisWeightChar=None
@@ -437,8 +593,8 @@ class AcaiaScale(object):
             self.device.subscribe(self.char_uuid, self.characteristicValueChanged)
             self.handle=self.device.get_handle(self.char_uuid)
 
-        time.sleep(0.5)
         self.notificationsReady()
+        time.sleep(0.5)
 
     def auto_connect(self):
         if self.connected:
@@ -455,10 +611,10 @@ class AcaiaScale(object):
             logging.info('No ACAIA scale found')
 
     def notificationsReady(self):
-        logging.info('Scale Ready!')
-        self.connected = True
         self.ident()
         self.last_heartbeat = time.time()
+        logging.info('Scale Ready!')
+        self.connected = True
         if self.backend=='bluepy':
             # For bluepy, use waitForNotifications() instead of Timer,
             # see notes in heartbeat()
@@ -468,10 +624,6 @@ class AcaiaScale(object):
         self.set_interval_thread.start()
 
     def ident(self):
-
-        if not self.connected:
-            return False
-
         if self.backend=='bluepy':
             self.char.write(encodeId(self.isPyxisStyle), withResponse=False)
             self.char.write(encodeNotificationRequest(), withResponse=False)
@@ -494,14 +646,27 @@ class AcaiaScale(object):
                 # thread.  setInterval object calls heartbeat() without any 
                 # timer delay
                 self.device.waitForNotifications(1)
-                if time.time() >= self.last_heartbeat+5:
+                while True:
+                    # Send queued up commands in this heartbeat thread
+                    packet = self.command_queue.dequeue()
+                    if packet: 
+                        self.char.write(packet,withResponse=False)
+                    else:
+                        break
+                if time.time() >= self.last_heartbeat+1:
                     # The official app sends a more complex heartbeat to Pyxis, once per
-                    # second.  The Pyxis heartbeat has 3 messages:
-                    # encodeId(True), encodeHeartbeat(), encode(6,[0]*16).
+                    # second.  Not sure if this complex heartbeat is sent to
+                    # older scales.  The Pyxis heartbeat has 3 messages:
+                    # encodeId(True), encodeHeartbeat(), encodeGetSettings()
                     # But the Pyxis seems to work just fine with the single encodeHearbeat()
                     # once every 5 seconds as in the earlier scales.
                     self.last_heartbeat=time.time()
+                    if self.isPyxisStyle:
+                        self.char.write(encodeId(self.isPyxisStyle))
                     self.char.write(encodeHeartbeat(), withResponse=False)
+                    # We get settings with the encodeId(), so commenting ths out for now
+                    #if self.isPyxisStyle:
+                    #    self.char.write(encodeGetSettings(), withResponse=False)
                     logging.debug('Heartbeat success')
             elif self.backend=='pygatt':
                 self.device.char_write_handle(self.handle,encodeHeartbeat(),wait_for_response=False)
@@ -510,18 +675,52 @@ class AcaiaScale(object):
             return True
         except Exception as e:
             logging.debug('Heartbeat failed '+str(e))
+            try:
+                self.disconnect()
+            except:
+                return False
 
 
     def tare(self):
         if not self.connected:
             return False
         if self.backend=='bluepy':
-            self.char.write( encodeTare(), withResponse=False)
+            self.command_queue.add(encodeTare())
         elif self.backend=='pygatt':
             self.device.char_write(self.char_uuid,encodeTare(),wait_for_response=False)
 
         return True
 
+    def startTimer(self):
+        if not self.connected:
+            return False
+        if self.backend=='bluepy':
+            self.command_queue.add(encodeStartTimer())
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeStartTimer(),wait_for_response=False)
+        self.timer_start_time = time.time()
+        self.timer_running=True
+
+    def stopTimer(self):
+        if not self.connected:
+            return False
+        if self.backend=='bluepy':
+            self.command_queue.add(encodeStopTimer())
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeStopTimer(),wait_for_response=False)
+
+        self.paused_time = time.time()-self.timer_start_time
+        self.timer_running=False
+
+    def resetTimer(self):
+        if not self.connected:
+            return False
+        if self.backend=='bluepy':
+            self.command_queue.add(encodeResetTimer())
+        elif self.backend=='pygatt':
+            self.device.char_write(self.char_uuid,encodeResetTimer(),wait_for_response=False)
+        self.paused_time=0
+        self.timer_running=False
 
     def disconnect(self):
 
@@ -529,7 +728,6 @@ class AcaiaScale(object):
         if self.device:
 
             if self.backend=='pygatt':
-
                 self.device.disconnect()
                 self.adapter.stop()
 
