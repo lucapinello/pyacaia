@@ -36,6 +36,7 @@ def find_acaia_devices(timeout=3,backend='bluepy'):
                 if (d['name'] 
                     and (d['name'].startswith('ACAIA')
                         or d['name'].startswith('PYXIS')
+                        or d['name'].startswith('LUNAR')
                         or d['name'].startswith('PROCH'))):
                     print (d['name'],d['address'])
                     addresses.append(d['address'])
@@ -62,6 +63,7 @@ def find_acaia_devices(timeout=3,backend='bluepy'):
                     if (desc=='Complete Local Name' 
                         and (value.startswith('ACAIA')
                              or value.startswith('PYXIS')
+                             or value.startswith('LUNAR')
                              or value.startswith('PROCH'))):
 
                         print(value, dev.addr)
