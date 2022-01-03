@@ -24,6 +24,13 @@ def find_acaia_devices(timeout=3,backend='bluepy'):
     addresses=[]
     print('Looking for ACAIA devices...')
 
+    devices_start_names = [
+        'ACAIA',
+        'PYXIS',
+        'LUNAR',
+        'PROCH'
+    ]
+
     if backend=='pygatt':
         try:
             from pygatt import GATTToolBackend
@@ -34,9 +41,7 @@ def find_acaia_devices(timeout=3,backend='bluepy'):
             addresses=[]
             for d in devices:
                 if (d['name'] 
-                    and (d['name'].startswith('ACAIA')
-                        or d['name'].startswith('PYXIS')
-                        or d['name'].startswith('PROCH'))):
+                    and any(d['name'].startswith(name) for name in devices_start_names)):
                     print (d['name'],d['address'])
                     addresses.append(d['address'])
             adapter.stop()
@@ -60,9 +65,7 @@ def find_acaia_devices(timeout=3,backend='bluepy'):
             for dev in devices:
                 for (adtype, desc, value) in dev.getScanData():
                     if (desc=='Complete Local Name' 
-                        and (value.startswith('ACAIA')
-                             or value.startswith('PYXIS')
-                             or value.startswith('PROCH'))):
+                        and any(value.startswith(name) for name in devices_start_names)):
 
                         print(value, dev.addr)
                         addresses.append(dev.addr)
