@@ -2,6 +2,8 @@
 
 Python module to interact with Acaia scales (https://acaia.co/collections/coffee-scales) via Bluetooth (BLE). 
 
+Note: If you are using the Acaia Lunar 2021 edition, make sure to update the firmware, otherwise the commands will not work (e.g. tare, start timer etc).
+
 This code was inspired by the javascript version available here https://github.com/bpowers/btscale
 
 ## 0. Requirements
