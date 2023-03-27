@@ -178,7 +178,7 @@ class Message(object):
             logging.debug('message '+str(msgType)+': %s' %payload)
 
     def _decode_weight(self,weight_payload):
-        value= ((weight_payload[1] & 0xff) << 8) + (weight_payload[0] & 0xff)
+        value= ((weight_payload[2] & 0xff) << 16) + ((weight_payload[1] & 0xff) << 8) + (weight_payload[0] & 0xff)
         unit=  weight_payload[4] & 0xFF;
         if (unit == 1): value /= 10.0
         elif (unit == 2): value /= 100.0
